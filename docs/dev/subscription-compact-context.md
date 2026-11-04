@@ -1,0 +1,102 @@
+# Compact subscription context
+
+The optional Codex dashboard path replaces the large Javis kernel with a small execution
+contract. Native Codex instructions, tools, brain rules and skill discovery remain enabled.
+Claude, personas, API engines and other channels retain their existing prompt paths.
+
+Enable with an ordinary settings merge, preserving all other configuration:
+
+```json
+{"context_runtime": {
+  "subscription_prompt_mode": "compact-v1",
+  "memory_relevance_mode": "strict-v1"
+}}
+```
+
+Both flags are opt-in. Remove them to restore the previous prompt/retrieval policy.
+Rendering retains the existing profile, project, session attachments, core, coding, language,
+clock and learning controls. Protected blocks are never trimmed to meet a token target.
+The source compiler can independently fall back for memory and skills. A compiler error
+retains the compact execution contract and restores source discovery; a broken source reader
+falls back to the original prompt. The hub continues to enforce authority in code.
+
+Strict retrieval removes conversational filler, requires relevant word/entity overlap and
+honors the confidence threshold. It can return zero results. Always-on identity records
+remain protected; explicit recall with insufficient confidence restores legacy memory.
+Frequent names are retained even if most of a brain concerns one business. Active task terms
+help short continuations and recall, without pulling an old topic into a clear new question.
+Only selected brain skills are loaded by the existing lazy source compiler. Brain routers
+and the native Codex/plugin catalogs are separate; this change does not suppress the latter.
+The contract asks for bounded reads, JSON filtering and reuse of evidence already loaded.
+It does not silently truncate tool errors or native tool results.
+
+`javis_run_tool` accepts an optional `result_view` with a JSON `pointer`, record `fields`,
+`offset` and `limit`. Projection follows the same authorized/audited tool call exactly once.
+It preserves detected errors verbatim and carries source IDs, provenance, counts, pagination
+and a hash of the original result. Unknown text/shapes or invalid views pass through unchanged.
+No new files, result replay, write retries or unguarded cache endpoints are introduced.
+Omitted fields do not mean absent data; never repeat a write to retrieve another page.
+
+## Usage and thread rotation
+
+`subscription.usage` trace events and the additive WebSocket `usage_telemetry` frame contain
+turn input, cached input, uncached input, output, usage event count, verified request count,
+request count (null when unknown), completeness and measured last-request input. Trace events
+also retain request-level usage observations. Input already includes cached input.
+
+Cumulative provider counters reject duplicate or limit-only notifications. A request count
+is verified only when each cumulative delta equals the provider's last-request usage. Cold
+resumes without a baseline and batched deltas explicitly leave the complete count unknown.
+Warm handles retain their baseline. The exec fallback still reports turn totals, without
+claiming request-level telemetry. Estimates from the context compiler remain estimates and
+are not substituted for provider measurements.
+
+Missing measurements invalidate the saved context value. Explicit thread clearing or
+switching to a different native thread also clears its context measurement; rebinding the
+same thread preserves it. These are metadata updates, not automatic session resets.
+
+The historical `sessions.last_input_tokens` column remains a turn total. Request context
+lives in a separate `subscription_request_context` table. `get_session()` exposes its
+`last_context_input_tokens` and provider tag, starting at zero when there is no observation.
+No historical turn totals are copied. The provider tag prevents an engine switch from
+applying another native thread's measurement. All rotation decisions use these request
+measurements; providers without them cannot trigger rotation from totals.
+
+Migration from early opt-in patches transactionally transfers their request-only columns
+into the separate table and removes those bookkeeping columns from `sessions`, preserving
+conversation data and native IDs. This retains the exact protected SQL-source schema and
+its existing native qualification evidence. Historical qualification files/hashes are not
+rewritten or declared valid for changed enforcement source. Rollback leaves the side table
+intact; an earlier patched build can recreate its metadata columns without resetting chats.
+
+Automatic replacement of a subscription thread is off by default; native context
+management continues. An operator may explicitly opt into
+`subscription_thread_rotation_mode: "measured-v1"`; even then, a durable compact summary
+must already exist. Neither the compact prompt flag nor this deployment resets a thread.
+
+Historical usage-page `turns` are observation counts, not a verified number of requests.
+The parser exposes that count basis and the UI labels it accordingly. Cached input is
+still processed input; these metrics do not imply a subscription-quota saving percentage.
+
+## Validation and deployment
+
+Run the repository test runner for subscription, memory, Codex steering, usage parsing,
+prompt rendering, project/session context and trial SQL context. Windows path-sensitive
+failures must be checked on Linux before deployment. Validate the changelog fragment with
+`python tools/release.py check`; do not change VERSION in the contribution.
+
+For an older running release, apply the code diff to a snapshot of that exact release,
+then test it. Do not replace its main.py with the latest upstream file. Build a local image
+from the existing immutable image plus only the changed files. Keep the original image,
+compose, encrypted settings and a consistent SQLite backup outside the brain. Verify file
+hashes before changing the service, wait for active work to finish, recreate only Javis,
+then verify health, data counts, model choice, hashes and a fresh chat. Keep a concrete
+rollback that restores the old image/compose and only the changed settings flags. Do not
+roll back the live database over newer conversation data.
+
+Use paired fresh sessions with the same model/reasoning: short answer, sourced recall,
+Wiki lookup, read-only TickTick, a clearly labeled scratch journal write with readback,
+and an authority check. Never turn test content into a personal fact or send messages.
+Report each task separately: tool round variance can outweigh a smaller system prompt.
+Text-token reductions exclude native instructions/tools/history and are not total wire
+usage reductions. A native context floor may prevent a 5,000-8,000 input target.
