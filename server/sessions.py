@@ -508,6 +508,8 @@ class SessionStore:
                               # thấy thread phình tới đâu - trừ chính con số này. Nó là dấu
                               # hiệu DUY NHẤT để biết khi nào phải bắt đầu mạch mới.
                               ("last_input_tokens", "INTEGER NOT NULL DEFAULT 0"),
+                              # Separate measurement: never migrate a turn sum into request context.
+                              ("codex_last_request_input_tokens", "INTEGER NOT NULL DEFAULT 0"),
                               # msg_count tại lần xoay mạch gần nhất. Có để chống XOAY LIÊN
                               # TỤC: token vào của engine thuê bao phần lớn đến từ vòng lặp
                               # agentic bên trong nó, không phải từ độ dài mạch. Nếu một lượt
@@ -1811,6 +1813,13 @@ class SessionStore:
             (max(0, int(tokens or 0)), session_id),
         ))
 
+    def set_codex_last_request_input_tokens(self, session_id: str, tokens: int) -> None:
+        """Persist measured request context independently of turn-level billing totals."""
+        self._write(lambda c: c.execute(
+            "UPDATE sessions SET codex_last_request_input_tokens = ? WHERE id = ?",
+            (max(0, int(tokens or 0)), session_id),
+        ))
+
     def mark_thread_rotated(self, session_id: str) -> None:
         """Ghi mốc msg_count lúc vừa xoay mạch. Xem cột thread_rotated_msg ở migration."""
         self._write(lambda c: c.execute(
@@ -1854,7 +1863,7 @@ class SessionStore:
     def clear_codex_thread_id(self, session_id: str) -> None:
         """Thread Codex thành stale khi provider khác chen lượt vào cùng hội thoại."""
         self._write(lambda c: c.execute(
-            "UPDATE sessions SET codex_thread_id = NULL WHERE id = ? AND codex_thread_id IS NOT NULL",
+            "UPDATE sessions SET codex_thread_id = NULL, codex_last_request_input_tokens = 0 WHERE id = ?",
             (session_id,),
         ))
 
