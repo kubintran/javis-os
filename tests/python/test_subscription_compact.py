@@ -10,12 +10,13 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'server'))
+sys.path.append('/app/server')
 import subscription_prompt as prompt
 import memory_index
 
 
 def subscription_function():
-    tree = ast.parse((ROOT / 'server/main.py').read_text())
+    tree = ast.parse((ROOT / 'server/main.py').read_text(encoding='utf-8'))
     node = next(n for n in ast.walk(tree)
                 if isinstance(n, ast.AsyncFunctionDef) and n.name == '_subscription_system_prompt')
     return compile(ast.fix_missing_locations(ast.Module(body=[node], type_ignores=[])), '<subscription>', 'exec')
@@ -129,6 +130,35 @@ class SubscriptionTests(unittest.TestCase):
 
 
 class MemoryTests(unittest.TestCase):
+    def test_frequent_name_short_query_and_continuation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            facts = root / 'brain/memory/facts'
+            facts.mkdir(parents=True)
+            for n in range(12):
+                (facts / f'villago-{n}.md').write_text(
+                    f'---\ntype: business\n---\nVillago resort booking decision {n}.\n', encoding='utf-8')
+            (facts / 'codex.md').write_text('Codex token input optimization.', encoding='utf-8')
+            index = memory_index.MemoryIndex(root / 'state')
+            try:
+                found = index.retrieve(root / 'brain', 'Villago', strict_relevance=True)
+                self.assertTrue(found.records)
+                self.assertTrue(all('villago' in x['normalized'] for x in found.records))
+                found = index.retrieve(root / 'brain', 'continue', active_state=['Villago booking'], strict_relevance=True)
+                self.assertTrue(found.records)
+                found = index.retrieve(root / 'brain', 'Codex token input optimization',
+                                       active_state=['Villago booking'], strict_relevance=True)
+                self.assertTrue(found.records)
+                self.assertTrue(all('codex' in x['normalized'] for x in found.records))
+                found = index.retrieve(root / 'brain',
+                    'Chào bạn, trả lời đúng một câu ngắn. Không cần gọi công cụ.',
+                    active_state=['Villago booking'], strict_relevance=True)
+                self.assertEqual(found.records, ())
+                found = index.retrieve(root / 'brain', 'Trả lời ngắn gọn, Villago', strict_relevance=True)
+                self.assertTrue(found.records)
+            finally:
+                index._conn().close()
+
     def test_low_score_and_unrelated_graph_results_rejected(self):
         self.assertFalse(memory_index._eligible_memory(
             {'normalized': 'token input', 'retrieval_score': .23}, ['token'], .38))
@@ -159,6 +189,8 @@ class MemoryTests(unittest.TestCase):
             self.assertFalse(found.fallback_required)
             found = index.retrieve(root / 'brain', 'remember unrelatedquux missingtopic', strict_relevance=True)
             self.assertTrue(found.fallback_required)
+            found = index.retrieve(root / 'brain', 'Tôi đã chốt unrelatedquux missingtopic?', strict_relevance=True)
+            self.assertTrue(found.fallback_required)
             found = index.retrieve(root / 'brain', 'Codex token input prompt', strict_relevance=True)
             self.assertTrue(found.records)
             self.assertTrue(all('codex' in x['normalized'] for x in found.records))
@@ -166,6 +198,7 @@ class MemoryTests(unittest.TestCase):
                 'hãy đo và rà lại tất cả rồi đề xuất giải pháp tổng thể giúp tôi',
                 strict_relevance=True)
             self.assertEqual(found.records, ())
+            index._conn().close()
 
 
 if __name__ == '__main__':

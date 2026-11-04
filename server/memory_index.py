@@ -31,7 +31,8 @@ _CODE_RE = re.compile(r"`([^`]{2,80})`")
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 _MEMORY_HINT_RE = re.compile(
     r"\b(nhớ|memory|trước đây|lần trước|đã nói|hôm trước|của anh|của tôi|"
-    r"remember|previously|last time|my preference|we decided)\b", re.IGNORECASE,
+    r"đã chốt|quyết định|đã thống nhất|đã chọn|chốt gì|"
+    r"remember|previously|last time|my preference|we decided|what did we|what did I)\b", re.IGNORECASE,
 )
 
 
@@ -87,30 +88,43 @@ def _terms(value: str) -> list[str]:
     return [x for x in dict.fromkeys(_norm(value).split()) if x not in stop]
 
 
+def _retrieval_objective(query: str) -> str:
+    """Output/tool directives and greetings are not memory subjects."""
+    value = _norm(query)
+    for pattern in (
+        r"\b(?:xin chao|chao ban|hello|hi)\b",
+        r"\btra loi\s+(?:(?:dung|chi)\s+)?(?:mot cau ngan|ngan gon|ngan)\b",
+        r"\bkhong can\s+(?:(?:goi|dung)\s+)?(?:cong cu|tool)\b",
+        r"\b(?:answer|reply)\s+(?:briefly|in one sentence)\b",
+        r"\b(?:no tools needed|do not use tools)\b",
+    ):
+        value = re.sub(pattern, " ", value)
+    return value
+
+
 def _eligible_memory(item: dict, terms: list[str], min_confidence: float) -> bool:
     """Never fill slots with low-score or merely graph-adjacent records."""
     if item.get("always_on"):
         return True
     overlap = set(terms) & set((item.get("normalized") or "").split())
-    minimum_matches = 2 if len(terms) >= 3 else 1
+    entity_match = any(set(_norm(entity).split()) <= set(terms)
+                       for entity in item.get("entities") or [] if _norm(entity))
+    minimum_matches = 1 if entity_match or len(terms) < 3 else 2
     return (float(item.get("retrieval_score") or 0) >= min_confidence
             and len(overlap) >= minimum_matches)
 
 
 def _discriminative_terms(db, scope: str, terms: list[str]) -> list[str]:
-    """Drop corpus-wide vocabulary instead of matching every generic request."""
-    rows = db.execute("SELECT normalized FROM memory_records WHERE scope=?", (scope,)).fetchall()
-    documents = [set(row["normalized"].split()) for row in rows]
+    """Remove conversational filler without dropping frequent names or subjects."""
     request_words = set("hay va ban minh than nguoi dung phan rat nhieu mau het bi "
                         "do ra lai tat ca roi de xuat giai phap tong the giup "
                         "kiem tra xem lam viec can muon dang se duoc den tu khi "
                         "nhu trong tren ve xin please help review check all "
                         "can you me we do is are this it".split())
     terms = [term for term in terms if term not in request_words]
-    if len(documents) < 10:
-        return terms
-    return [term for term in terms
-            if sum(term in words for words in documents) <= max(2, len(documents) * 0.15)]
+    # Frequency alone cannot make a topic irrelevant: a brain may mostly concern one
+    # business or person. Keep names and subject terms even in a homogeneous corpus.
+    return terms
 
 
 def _memory_dir(brain: Path) -> Path:
@@ -485,8 +499,17 @@ class MemoryIndex:
         meta = self.rebuild(brain)
         scope = brain_scope(brain)
         db = self._conn()
-        current_terms = _terms(str(query or ""))[:16]
-        query_text = " ".join([str(query or "")] + [str(x) for x in active_state or []])
+        query_value = _retrieval_objective(str(query or "")) if strict_relevance else str(query or "")
+        current_terms = _terms(query_value)[:16]
+        active_state = tuple(active_state or ())
+        if strict_relevance:
+            meaningful = _discriminative_terms(db, scope, current_terms)
+            followup = (bool(meaningful) and len(meaningful) <= 2 or bool(re.search(
+                r"\b(tiếp|tiếp tục|việc đó|cái đó|dự án đó|còn nó|continue|that project|what about it)\b",
+                str(query or ""), re.IGNORECASE)))
+            if not followup and not _MEMORY_HINT_RE.search(str(query or "")):
+                active_state = ()
+        query_text = " ".join([query_value] + [str(x) for x in active_state])
         terms = list(dict.fromkeys(current_terms + _terms(query_text)))[:24]
         if strict_relevance:
             terms = _discriminative_terms(db, scope, terms)
@@ -520,7 +543,8 @@ class MemoryIndex:
                     continue
                 exact_seen.add(item["record_id"])
                 hit = len(set(terms) & set(item["normalized"].split())) / max(1, len(terms))
-                entity_hit = any(_norm(entity) in set(terms) for entity in item.get("entities") or [])
+                entity_hit = any(set(_norm(entity).split()) <= set(terms)
+                                 for entity in item.get("entities") or [] if _norm(entity))
                 item["retrieval_score"] = min(0.98, 0.22 + hit * 0.72 + (0.14 if entity_hit else 0))
                 previous = selected.get(item["record_id"], {})
                 item["retrieval_score"] = max(item["retrieval_score"],

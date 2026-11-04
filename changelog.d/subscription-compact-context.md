@@ -1,16 +1,16 @@
 ---
 bump: patch
-title: Add opt-in compact subscription context and stricter memory retrieval
+title: Reduce subscription context and separate request usage from turn totals
 ---
 ## vi
-### Cải thiện
-- Thêm chế độ ngữ cảnh gọn cho Codex subscription, giữ hồ sơ và chỉ dẫn project, phiên. Quản trị viên có thể bật riêng mà không đổi model.
-- Thêm bộ lọc trí nhớ theo chủ đề, cho phép không nạp đoạn nhớ không liên quan. Mặc định vẫn giữ chế độ cũ để triển khai có kiểm soát.
+### Sửa lỗi
+- Prompt gọn cho Codex được bật riêng, giữ hồ sơ, project, phiên và đường khám phá skill. Bộ nhớ có thể trả rỗng khi không liên quan, vẫn giữ recall theo tên và câu tiếp nối.
+- Xoay thread dựa vào input request cuối đã đo, không lấy tổng nhiều vòng. Telemetry tách cache, uncached, tổng lượt, event và số request được xác minh.
 
-- Sửa điều kiện xoay mạch Codex để dùng số token lần gọi gần nhất, tách khỏi tổng cả lượt; không lấy số tổng cũ làm ngữ cảnh.
+- Kết quả JSON lớn có thể chọn rõ pointer, trường và trang qua cùng gateway; giữ lỗi và thông tin nguồn. Xóa số đo context khi thread đổi hoặc không đo được request.
 
 ## en
-### Improved
-- Add opt-in compact context for Codex subscriptions while retaining profile, project and session instructions without changing the selected model.
-- Add opt-in topic filtering for memory retrieval, including empty results when no fact is relevant. Existing defaults remain unchanged for controlled rollout.
-- Use the latest measured Codex request input for thread rotation instead of the turn sum, without migrating old sums into request context.
+### Fixed
+- An opt-in compact Codex prompt preserves profile, project, session and skill discovery. Memory may return no unrelated results while retaining name and continuation recall.
+- Thread rotation uses measured last-request input instead of multi-request turn totals. Telemetry separates cache, uncached input, turn totals, observations and verified requests.
+- Large JSON results can select an explicit pointer, fields and page through the same gateway while preserving errors and provenance. Context measurements clear on thread changes or missing request observations.

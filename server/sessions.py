@@ -508,8 +508,8 @@ class SessionStore:
                               # thấy thread phình tới đâu - trừ chính con số này. Nó là dấu
                               # hiệu DUY NHẤT để biết khi nào phải bắt đầu mạch mới.
                               ("last_input_tokens", "INTEGER NOT NULL DEFAULT 0"),
-                              # Separate measurement: never migrate a turn sum into request context.
-                              ("codex_last_request_input_tokens", "INTEGER NOT NULL DEFAULT 0"),
+                              ("last_context_input_tokens", "INTEGER NOT NULL DEFAULT 0"),
+                              ("last_context_provider", "TEXT NOT NULL DEFAULT ''"),
                               # msg_count tại lần xoay mạch gần nhất. Có để chống XOAY LIÊN
                               # TỤC: token vào của engine thuê bao phần lớn đến từ vòng lặp
                               # agentic bên trong nó, không phải từ độ dài mạch. Nếu một lượt
@@ -1813,11 +1813,11 @@ class SessionStore:
             (max(0, int(tokens or 0)), session_id),
         ))
 
-    def set_codex_last_request_input_tokens(self, session_id: str, tokens: int) -> None:
-        """Persist measured request context independently of turn-level billing totals."""
+    def set_last_context_input_tokens(self, session_id: str, tokens: int, provider: str = "codex") -> None:
+        """Measured last request input only. Old turn totals are never migrated here."""
         self._write(lambda c: c.execute(
-            "UPDATE sessions SET codex_last_request_input_tokens = ? WHERE id = ?",
-            (max(0, int(tokens or 0)), session_id),
+            "UPDATE sessions SET last_context_input_tokens = ?, last_context_provider = ? WHERE id = ?",
+            (max(0, int(tokens or 0)), provider, session_id),
         ))
 
     def mark_thread_rotated(self, session_id: str) -> None:
@@ -1856,22 +1856,27 @@ class SessionStore:
         if not thread_id:
             return
         self._write(lambda c: c.execute(
-            "UPDATE sessions SET codex_thread_id = ?, updated_at = ? WHERE id = ?",
-            (thread_id, time.time(), session_id),
+            "UPDATE sessions SET last_context_input_tokens = CASE "
+            "WHEN codex_thread_id IS NOT ? AND last_context_provider = 'codex' THEN 0 ELSE last_context_input_tokens END, "
+            "codex_thread_id = ?, updated_at = ? WHERE id = ?",
+            (thread_id, thread_id, time.time(), session_id),
         ))
 
     def clear_codex_thread_id(self, session_id: str) -> None:
         """Thread Codex thành stale khi provider khác chen lượt vào cùng hội thoại."""
         self._write(lambda c: c.execute(
-            "UPDATE sessions SET codex_thread_id = NULL, codex_last_request_input_tokens = 0 WHERE id = ?",
+            "UPDATE sessions SET codex_thread_id = NULL, "
+            "last_context_input_tokens = CASE WHEN last_context_provider = 'codex' THEN 0 ELSE last_context_input_tokens END "
+            "WHERE id = ?",
             (session_id,),
         ))
 
     def clear_cli_session_id(self, session_id: str) -> None:
         """Mạch Claude Code thành stale khi engine khác chen một lượt vào cùng hội thoại."""
         self._write(lambda c: c.execute(
-            "UPDATE sessions SET cli_session_id = NULL "
-            "WHERE id = ? AND cli_session_id IS NOT NULL",
+            "UPDATE sessions SET cli_session_id = NULL, "
+            "last_context_input_tokens = CASE WHEN last_context_provider = 'claude-code' THEN 0 ELSE last_context_input_tokens END "
+            "WHERE id = ?",
             (session_id,),
         ))
 
@@ -1902,8 +1907,9 @@ class SessionStore:
 
     def clear_grok_session_id(self, session_id: str) -> None:
         self._write(lambda c: c.execute(
-            "UPDATE sessions SET grok_session_id = NULL "
-            "WHERE id = ? AND grok_session_id IS NOT NULL",
+            "UPDATE sessions SET grok_session_id = NULL, "
+            "last_context_input_tokens = CASE WHEN last_context_provider = 'grok' THEN 0 ELSE last_context_input_tokens END "
+            "WHERE id = ?",
             (session_id,),
         ))
 
@@ -1934,8 +1940,9 @@ class SessionStore:
             if cot == cot_giu or not (row.get(cot) or ""):
                 continue
             self._write(lambda c, _cot=cot: c.execute(
-                f"UPDATE sessions SET {_cot} = NULL WHERE id = ? AND {_cot} IS NOT NULL",
-                (session_id,),
+                f"UPDATE sessions SET {_cot} = NULL, last_context_input_tokens = CASE "
+                "WHEN last_context_provider = ? THEN 0 ELSE last_context_input_tokens END WHERE id = ?",
+                ({"codex_thread_id": "codex", "cli_session_id": "claude-code", "grok_session_id": "grok"}[_cot], session_id),
             ))
             da_don.append(nhan)
         return da_don
